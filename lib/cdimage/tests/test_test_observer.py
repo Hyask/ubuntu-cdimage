@@ -282,3 +282,56 @@ api_key: to_mytopsecretapikey
                 )
             ]
         )
+
+    @mock.patch("cdimage.test_observer.requests.put", side_effect=mocked_requests_put)
+    @mock.patch("cdimage.test_observer.requests.post", side_effect=mocked_requests_post)
+    @mock.patch(
+        "cdimage.test_observer.requests.patch", side_effect=mocked_requests_patch
+    )
+    def test_submit_failed(self, mock_patch, mock_post, mock_put):
+        config = Config(read=False)
+        config.root = self.use_temp_dir()
+
+        with tempfile.NamedTemporaryFile() as to_conf:
+            to_conf_p = Path(to_conf.name)
+            to_conf_p.write_text(
+                "\n[service]\n"
+                "url: https://tests-api.test.cdimage/v1/\n"
+                "api_key: to_mytopsecretapikey\n"
+            )
+            config["TO_CONFIG"] = to_conf.name
+            to = TestObserver(config)
+
+        date = "20260127"
+        directory = Path(config.root) / "www" / "full" / "xubuntu" / "daily" / date
+        directory.mkdir(exist_ok=True, parents=True)
+
+        tree = Tree.get_for_directory(config, str(directory), "daily")
+        publisher = Publisher.get_daily(tree, "daily")
+
+        # A failed build: no artifact and no SHA256SUMS file on disk.
+        entry_path = directory / "resolute-xubuntu-amd64.iso"
+
+        to.publish_image(
+            publisher,
+            str(entry_path),
+            date,
+            failed=True,
+        )
+
+        # The build-image test result must report a FAILED status.
+        post_result = mock_post.call_args_list[0].kwargs["json"]
+        self.assertEqual("build-image", post_result[0]["name"])
+        self.assertEqual("FAILED", post_result[0]["status"])
+
+        # All other values must be correctly set, and a made-up unique sha256
+        # must be used (64 hex characters).
+        sent = mock_put.call_args_list[0].kwargs["json"]
+        self.assertEqual("resolute-xubuntu-amd64.iso", sent["name"])
+        self.assertEqual("20260127", sent["version"])
+        self.assertEqual("amd64", sent["arch"])
+        self.assertEqual("xubuntu", sent["os"])
+        self.assertEqual("resolute", sent["release"])
+        self.assertEqual("xubuntu-release", sent["owner"])
+        self.assertEqual(64, len(sent["sha256"]))
+        int(sent["sha256"], 16)

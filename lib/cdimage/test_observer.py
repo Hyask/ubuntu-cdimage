@@ -31,6 +31,7 @@ api_key: to_mytopsecretapikey
 
 import configparser
 import json
+import secrets
 import requests
 from pathlib import Path
 
@@ -102,7 +103,7 @@ class TestObserver:
         }
         return OS_OWNER_MAPPING.get(os, "ubuntu-cdimage")
 
-    def publish_image(self, publisher, path: str, date: str):
+    def publish_image(self, publisher, path: str, date: str, failed: bool = False):
         logger.info("Submitting images to Test Observer")
 
         full_path = Path(path)
@@ -112,7 +113,13 @@ class TestObserver:
         arch = artifact_name.split(".")[0].split("-")[-1]
         os = cdimage_rel_path.parts[0]
         release = full_path.stem.split("-")[0]
-        sha256 = self._get_sha256(full_path)
+        if failed:
+            # A failed build has no artifact, hence no real sha256. Make up a
+            # unique value so Test Observer still records the build attempt as a
+            # distinct artifact.
+            sha256 = secrets.token_hex(32)
+        else:
+            sha256 = self._get_sha256(full_path)
 
         # Hack around `daily-dangerous` having the exact same name as
         # `daily-live`, thus showing only one row in TO
@@ -161,7 +168,7 @@ class TestObserver:
             json=[
                 {
                     "name": "build-image",
-                    "status": "PASSED",
+                    "status": "FAILED" if failed else "PASSED",
                     "comment": "Build ISO on Launchpad and cdimage",
                     "io_log": "TODO: find a way to send out the build logs here",
                 }

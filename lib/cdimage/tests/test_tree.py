@@ -1111,6 +1111,18 @@ class TestDailyTreePublisher(TestCase):
             "%s-desktop-i386.iso" % self.config.series,
         )
 
+    def test_publish_binary_failed_records_failed_image(self):
+        publisher = self.make_publisher("ubuntu", "daily-live")
+        self.capture_logging()
+        # No source image exists, so the build is considered failed.
+        published = list(publisher.publish_binary("desktop", "i386", "20120807"))
+        self.assertEqual([], published)
+        target_dir = os.path.join(publisher.publish_base, "20120807")
+        self.assertEqual(
+            [os.path.join(target_dir, "%s-desktop-i386.iso" % self.config.series)],
+            publisher.failed_images,
+        )
+
     def test_publish_netboot(self):
         publisher = self.make_publisher("ubuntu-server", "daily-live")
         source_dir = publisher.image_output("amd64")

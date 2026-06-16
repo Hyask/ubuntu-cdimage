@@ -2056,6 +2056,7 @@ class DailyTreePublisher(Publisher):
     def __init__(self, tree, image_type):
         super(DailyTreePublisher, self).__init__(tree, image_type)
         self.checksum_dirs = []
+        self.failed_images = []
 
     def image_output(self, arch):
         return os.path.join(
@@ -2324,6 +2325,9 @@ class DailyTreePublisher(Publisher):
             for name in osextras.listdir_force(target_dir):
                 if name.startswith("%s." % out_prefix):
                     os.unlink(os.path.join(target_dir, name))
+            # The build failed: there is no artifact to publish, but we still
+            # want to report the failed build to Test Observer.
+            self.failed_images.append("%s.iso" % target_prefix)
             return
 
         logger.info("Publishing %s ..." % arch)
@@ -2573,6 +2577,19 @@ class DailyTreePublisher(Publisher):
             except Exception as e:
                 logger.warning("Couldn't submit artifact to Test Observer: %s", e)
 
+        for entry_path in self.failed_images:
+            try:
+                TestObserver(self.config).publish_image(
+                    self,
+                    entry_path,
+                    date,
+                    failed=True,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Couldn't submit failed build to Test Observer: %s", e
+                )
+
     def polish_directory(self, date):
         """Apply various bits of polish to a published directory."""
         target_dir = os.path.join(self.publish_base, date)
@@ -2601,6 +2618,9 @@ class DailyTreePublisher(Publisher):
         self.create_publish_info_file(date)
 
         # Publish artifacts to Test Observer
+        self.maybe_post_to(date)
+
+    def maybe_post_to(self, date):
         if "TO_CONFIG" in self.config and os.path.isfile(self.config["TO_CONFIG"]):
             self.post_to(date)
         else:
@@ -2934,6 +2954,7 @@ class DailyTreePublisher(Publisher):
         self.new_publish_dir(date)
         published = []
         self.checksum_dirs = []
+        self.failed_images = []
         if self.config.project == "livecd-base":
             for arch in self.config.cpuarches:
                 published.extend(list(self.publish_livecd_base(arch, date)))
@@ -2954,6 +2975,9 @@ class DailyTreePublisher(Publisher):
 
         if not published:
             logger.warning("No images produced!")
+            # Even though nothing was published, some builds may have failed.
+            # Report those failed builds to Test Observer.
+            self.maybe_post_to(date)
             return
 
         target_report = os.path.join(self.publish_base, date, "report.html")
