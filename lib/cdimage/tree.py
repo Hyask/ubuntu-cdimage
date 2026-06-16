@@ -80,6 +80,34 @@ projects = [
 ]
 
 
+# Recognised binary image extensions. A published image is one of these; the
+# extension is recovered by stripping a known prefix from the file name. Keep
+# in sync with the image_format list in manifest_files() and the extensions
+# accepted by manifest_file_allowed() / detect_image_extension().
+image_extensions = (
+    "iso",
+    "iso.gz",
+    "iso.xz",
+    "img",
+    "img.gz",
+    "img.xz",
+    "img.tar.gz",
+    "tar.gz",
+    "tar.xz",
+    "custom.tar.gz",
+    "wsl",
+)
+
+
+# publish_type values that unambiguously produce a non-ISO image. Used as a
+# fallback to guess the extension of a failed build when no previously
+# published image is available to copy the extension from. Keep in sync with
+# publish_type / _guess_image_type.
+publish_type_extensions = {
+    "wsl": "wsl",
+}
+
+
 def zsyncmake(infile, outfile, url, dry_run=False):
     command = ["zsyncmake"]
     if infile.endswith(".gz"):
@@ -2307,6 +2335,31 @@ class DailyTreePublisher(Publisher):
             False, save_target_path, target_path, self.tree.url_for_path(image_path)
         )
 
+    def expected_image_extension(self, publish_type, out_prefix, target_dir):
+        """Determine the extension an image would have, without inspecting it.
+
+        On a failed build there is no artifact to inspect with file(1), so
+        detect_image_extension cannot be used. Recover the extension by, in
+        order of preference:
+
+        1. reusing the extension of a previously published image with the same
+           name (in the date directory, then current/pending), which is the
+           name that the same build uses when it succeeds;
+        2. a publish_type-based mapping for unambiguous non-ISO types;
+        3. defaulting to "iso".
+        """
+        search_dirs = [target_dir]
+        for previous_name in ("current", "pending"):
+            search_dirs.append(os.path.join(self.publish_base, previous_name))
+        for search_dir in search_dirs:
+            for name in osextras.listdir_force(search_dir):
+                if not name.startswith("%s." % out_prefix):
+                    continue
+                extension = name[len(out_prefix) + 1:]
+                if extension in image_extensions:
+                    return extension
+        return publish_type_extensions.get(publish_type, "iso")
+
     def publish_binary(self, publish_type, arch, date):
         in_prefix = "%s-%s-%s" % (self.config.series, publish_type, arch)
         if publish_type == "live-core":
@@ -2322,12 +2375,18 @@ class DailyTreePublisher(Publisher):
 
         if not os.path.exists("%s.%s" % (source_prefix, self.source_extension)):
             logger.warning("No %s image for %s!" % (publish_type, arch))
+            # The build failed: there is no artifact to inspect with file(1),
+            # so determine the extension this image would have had before
+            # removing any leftover files from the target directory.
+            extension = self.expected_image_extension(
+                publish_type, out_prefix, target_dir
+            )
             for name in osextras.listdir_force(target_dir):
                 if name.startswith("%s." % out_prefix):
                     os.unlink(os.path.join(target_dir, name))
-            # The build failed: there is no artifact to publish, but we still
-            # want to report the failed build to Test Observer.
-            self.failed_images.append("%s.iso" % target_prefix)
+            # There is no artifact to publish, but we still want to report the
+            # failed build to Test Observer.
+            self.failed_images.append("%s.%s" % (target_prefix, extension))
             return
 
         logger.info("Publishing %s ..." % arch)

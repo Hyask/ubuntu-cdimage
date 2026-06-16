@@ -1123,6 +1123,55 @@ class TestDailyTreePublisher(TestCase):
             publisher.failed_images,
         )
 
+    def test_publish_binary_failed_reuses_previous_extension(self):
+        publisher = self.make_publisher("ubuntu", "daily-live")
+        # A previously published image exists in current/ with a non-ISO
+        # extension; the failed build should reuse the same extension so that
+        # it maps to the same Test Observer artifact.
+        publish_current = os.path.join(publisher.publish_base, "current")
+        touch(
+            os.path.join(
+                publish_current, "%s-desktop-i386.img.xz" % self.config.series
+            )
+        )
+        self.capture_logging()
+        published = list(publisher.publish_binary("desktop", "i386", "20120807"))
+        self.assertEqual([], published)
+        target_dir = os.path.join(publisher.publish_base, "20120807")
+        self.assertEqual(
+            [os.path.join(target_dir, "%s-desktop-i386.img.xz" % self.config.series)],
+            publisher.failed_images,
+        )
+
+    def test_publish_binary_failed_reuses_date_dir_extension(self):
+        publisher = self.make_publisher("ubuntu", "daily-live")
+        # A previously linked image in the date directory takes precedence even
+        # though it is about to be removed.
+        target_dir = os.path.join(publisher.publish_base, "20120807")
+        touch(os.path.join(target_dir, "%s-desktop-i386.tar.gz" % self.config.series))
+        self.capture_logging()
+        published = list(publisher.publish_binary("desktop", "i386", "20120807"))
+        self.assertEqual([], published)
+        self.assertEqual(
+            [os.path.join(target_dir, "%s-desktop-i386.tar.gz" % self.config.series)],
+            publisher.failed_images,
+        )
+        # The leftover file is still cleaned up.
+        self.assertEqual([], os.listdir(target_dir))
+
+    def test_publish_binary_failed_uses_publish_type_mapping(self):
+        publisher = self.make_publisher("ubuntu-wsl", "daily-live")
+        # No previously published image exists, so fall back to the
+        # publish_type-based mapping for an unambiguous non-ISO type.
+        self.capture_logging()
+        published = list(publisher.publish_binary("wsl", "amd64", "20120807"))
+        self.assertEqual([], published)
+        target_dir = os.path.join(publisher.publish_base, "20120807")
+        self.assertEqual(
+            [os.path.join(target_dir, "%s-wsl-amd64.wsl" % self.config.series)],
+            publisher.failed_images,
+        )
+
     def test_publish_netboot(self):
         publisher = self.make_publisher("ubuntu-server", "daily-live")
         source_dir = publisher.image_output("amd64")
